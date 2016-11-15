@@ -1,0 +1,182 @@
+---
+title: "SS0206-15GC"
+author: "Richard J. Telford"
+date: "October 2, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library("ggplot2")
+```
+
+```{r data}
+dates <- read.table(header = TRUE, text = 
+"depth_corr	Lab_Code	raw_14C_age	error
+51	Poz-55131	4310	60
+57	Poz-60276	4360	35
+69.5	ETH56189	5268	102
+71.5	Poz-51071	5420	50
+74.5	ETH56190	5417	114
+89.5	ETH56191	6495	147
+93	Poz-60277	6450	50
+95.5	ETH56962	6490	56
+99	Poz-55133	6960	60
+100.5	ETH56963	7165	107
+102.5	Poz-57692	7650	40
+108.5	Poz-55134	7830	50
+118.5	Poz-55119	8240	60
+129	Poz-60278	8690	50
+135.4	ETH56964	9139	94
+140.5	Poz-55120	9620	50
+150.5	Poz-55121	10160	70
+154.5	ETH56192	10292	241
+161	Poz-59472	10630	60
+170.5	Poz-57336	11380	60
+180.5	Poz-59473	11900	110
+206	Poz-55135	12690	100
+216	Poz-59475	13130	130
+226	Poz-55137	14190	100
+240.5	ETH56965	13930	109
+251.5	Poz-47990	14380	100
+270.5	ETH56966	15093	152
+290.5	Poz-57339	14950	70
+300.5	Poz-59476	15480	90
+312.5	Poz-51070	16010	100
+352	Poz-56508	16670	70
+406.5	Poz-47988	17730	130
+440.5	Poz-55140	18690	120
+490.5	Poz-55141	20150	220
+535.5	Poz-51066	20930	170
+")
+```
+
+Write OxCal model file
+```{r}
+  #calibrate singlely
+ages <- paste0("R_date(\"Dep", dates$depth_corr, "\",", dates$raw_14C_age, ",", dates$error, ");")
+ages <- paste(ages, collapse = "\n")
+
+curve <- "Curve(\"marine13\");"
+DR <- "Delta_R(\"Local Marine\",200,30);"
+
+command <- paste(curve, DR, ages, sep = "\n")
+
+writeLines(command, con = "oxcal.input")
+system(paste("/home/gbsrt/oxcal/OxCal/bin/OxCalLinux", "oxcal.input"))
+```
+
+Import Oxcal function
+
+```{r functions}
+get.vectors <- function(js, target) {
+  x <- js[grep(target, js)]
+  x <- gsub(".+=\\[(.+)\\];", "\\1", x)
+  x <- strsplit(x, ", ")
+  sapply(x, as.numeric)
+}
+
+get.value <- function(js, target, numeric = TRUE) {
+  x <- js[grep(target, js)]
+  x <- gsub(".+=(.+);", "\\1", x)
+  if(numeric) {
+    as.numeric(x)
+  } else {
+    x
+  }
+}
+```
+
+Import single dates
+```{r}
+js <- readLines("oxcal.js")
+likelihoods <- get.vector(js, "likelihood\\.prob=")
+start <- get.value(js, "likelihood\\.start")
+resolution <- get.value(js, "likelihood\\.resolution")
+
+oxcal <- mapply(
+  function(depth, prob, start, resolution, group){
+    data.frame(depth = depth, date = start + 0:(length(prob) - 1) * resolution, prob = prob, group = group)
+  }, 
+  depth = dates$depth_corr, 
+  prob = likelihoods,
+  start = start,
+  resolution = resolution,
+  group = 1:nrow(dates),
+  SIMPLIFY = FALSE)
+
+
+oxcal <- plyr::ldply(oxcal, I)
+oxcal$date <- 1950 - oxcal$date# convert to BP
+
+ggplot(oxcal, aes(x = depth, y = date, colour = prob, group = group, size = prob)) + 
+  geom_line() + 
+  scale_colour_continuous(low = "#56B1F7", high = "#132B43") + 
+  scale_x_reverse() +
+  scale_size(range = c(0, 6)) +
+  coord_flip()
+
+
+```
+
+P sequence model building
+
+```{r make_Psequence}
+ageDepths <- paste0("R_date(\"Dep", dates$depth_corr, "\",", dates$raw_14C_age, ",", dates$error, "){z=", dates$depth_corr, "};")
+ageDepths <- rev(ageDepths)#oldest first
+ageDepths <- paste(ageDepths, collapse = "\n")
+commandp <- paste(curve, DR, "P_Sequence(\"k\",1,1,U(-2,2)){\nBoundary(\"Bottom\")", ageDepths,    "Boundary(\"Top\");
+  };", sep = "\n")
+writeLines(commandp)
+
+writeLines(commandp, con = "oxcalp.input")
+system(paste("/home/gbsrt/oxcal/OxCal/bin/OxCalLinux", "oxcalp.input"))
+
+```
+
+Read P sequence model
+
+```{r readPseqmod}
+
+js <- readLines("oxcalp.js")
+
+depths <- get.value(js, "data\\.z")
+posterior <- get.vector(js, "posterior\\.prob=")
+comment <- get.value(js, "posterior\\.comment\\[0\\]", FALSE)
+comment <- comment[!grepl("MCMC", comment)]
+
+p_start <- get.value(js, "posterior\\.start")
+p_resolution <- get.value(js, "posterior\\.resolution")
+
+fortify_oxcal <- function(depths, prob, start, resolution, comment = NA){
+   out <- mapply(
+    function(depth, prob, start, resolution, group, comment){
+      data.frame(depth = depth, date = start + 0:(length(prob) - 1) * resolution, prob = prob, group = group, comment = comment)
+    }, 
+    depth = depths, 
+    prob = prob,
+    start = start,
+    resolution = resolution,
+    group = 1:length(depths),
+    comment = comment,
+    SIMPLIFY = FALSE
+  )
+  out <- plyr::ldply(out, I) 
+  out$date <- 1950 - out$date
+  out
+}
+
+pseq <- fortify_oxcal(depths = depths, prob = posterior[-1], start = p_start[-1], resolution = p_resolution[-1], comment = comment[-(1:2)])
+
+head(pseq)
+
+library(dplyr)
+pseq %>%# filter(grepl("Bottom", comment)) %>%
+  ggplot(aes(x = depth, y = date, alpha = prob)) + 
+  geom_line() + 
+#  scale_colour_continuous(low = "#56B1F7", high = "#132B43") + 
+  scale_x_reverse() +
+  coord_flip()
+
+```
