@@ -142,17 +142,6 @@ system(paste("/home/gbsrt/oxcal/OxCal/bin/OxCalLinux", "oxcalp.input"))
 Read P sequence model
 
 ```{r readPseqmod}
-
-js <- readLines("oxcalp.js")
-
-depths <- get.values(js, "data\\.z")
-posterior <- get.vectors(js, "posterior\\.prob=")
-comment <- get.values(js, "posterior\\.comment\\[0\\]", FALSE)
-comment <- comment[!grepl("MCMC", comment)]
-
-p_start <- get.values(js, "posterior\\.start")
-p_resolution <- get.values(js, "posterior\\.resolution")
-
 fortify_oxcal <- function(depths, prob, start, resolution, comment = NA){
    out <- mapply(
     function(depth, prob, start, resolution, group, comment){
@@ -171,16 +160,6 @@ fortify_oxcal <- function(depths, prob, start, resolution, comment = NA){
   out
 }
 
-pseq <- fortify_oxcal(depths = depths, prob = posterior[-1], start = p_start[-1], resolution = p_resolution[-1], comment = comment[-(1:2)])
-
-head(pseq)
-
-pseq %>%# filter(grepl("Bottom", comment)) %>%
-  ggplot(aes(x = depth, y = date, alpha = prob)) + 
-  geom_line() + 
-#  scale_colour_continuous(low = "#56B1F7", high = "#132B43") + 
-  scale_x_reverse() +
-  coord_flip()
 
 ```
 
