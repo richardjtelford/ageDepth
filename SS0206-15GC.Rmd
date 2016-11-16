@@ -156,28 +156,6 @@ system(paste("~/oxcal/OxCal/bin/OxCalLinux", "oxcalp.input"))
 
 Read P sequence model
 
-```{r readPseqmod}
-fortify_oxcal <- function(depths, prob, start, resolution, comment = NA){
-   out <- mapply(
-    function(depth, prob, start, resolution, group, comment){
-      data.frame(depth = depth, date = start + 0:(length(prob) - 1) * resolution, prob = prob, group = group, comment = comment)
-    }, 
-    depth = depths, 
-    prob = prob,
-    start = start,
-    resolution = resolution,
-    group = 1:length(depths),
-    comment = comment,
-    SIMPLIFY = FALSE
-  )
-  out <- plyr::ldply(out, I) 
-  out$date <- 1950 - out$date
-  out
-}
-
-
-```
-
 ```{r importOxcal}
 js <- readLines("oxcalp.js")
 
