@@ -15,11 +15,17 @@ library("ggplot2")
 ```{r data}
 dates <- read.table(header = TRUE, text = 
 "depth_corr	Lab_Code	raw_14C_age	error
+3.5	Poz-55129	820	50
+10.5	Poz-47991	1695	30
+23	Poz-60305	2365	35
+36	Poz-55130	3050	90
+45.5	ETH56961	3742	55
 51	Poz-55131	4310	60
 57	Poz-60276	4360	35
 69.5	ETH56189	5268	102
 71.5	Poz-51071	5420	50
 74.5	ETH56190	5417	114
+82.5	Poz-57691	6550	50
 89.5	ETH56191	6495	147
 93	Poz-60277	6450	50
 95.5	ETH56962	6490	56
@@ -42,6 +48,7 @@ dates <- read.table(header = TRUE, text =
 240.5	ETH56965	13930	109
 251.5	Poz-47990	14380	100
 270.5	ETH56966	15093	152
+271	Poz-55138	14280	100
 290.5	Poz-57339	14950	70
 300.5	Poz-59476	15480	90
 312.5	Poz-51070	16010	100
@@ -51,6 +58,9 @@ dates <- read.table(header = TRUE, text =
 490.5	Poz-55141	20150	220
 535.5	Poz-51066	20930	170
 ")
+
+##sort so oldest first
+dates <- dates[order(dates$depth_corr, decreasing = TRUE), ]
 ```
 
 Write OxCal model file
@@ -60,7 +70,7 @@ ages <- paste0("R_date(\"Dep", dates$depth_corr, "\",", dates$raw_14C_age, ",", 
 ages <- paste(ages, collapse = "\n")
 
 curve <- "Curve(\"marine13\");"
-DR <- "Delta_R(\"Local Marine\",200,30);"
+DR <- "Delta_R(\"Local Marine\",40,30);"
 
 command <- paste(curve, DR, ages, sep = "\n")
 
@@ -127,16 +137,21 @@ ggplot(oxcal, aes(x = depth, y = date, colour = prob, group = group, size = prob
 P sequence model building
 
 ```{r make_Psequence}
-ageDepths <- paste0("R_date(\"Dep", dates$depth_corr, "\",", dates$raw_14C_age, ",", dates$error, "){z=", dates$depth_corr, "};")
-ageDepths <- rev(ageDepths)#oldest first
+ageDepths <- paste0(' R_date("Dep', dates$depth_corr, '",', dates$raw_14C_age, ',', dates$error, '){\n   z=', dates$depth_corr, ';\n   Outlier(0.05);\n };')
 ageDepths <- paste(ageDepths, collapse = "\n")
-commandp <- paste(curve, DR, "P_Sequence(\"k\",1,1,U(-2,2)){\nBoundary(\"Bottom\");", ageDepths,    "Boundary(\"Top\");
-  };", sep = "\n")
+commandp <- paste(curve, DR,
+  'Outlier_Model("General",T(5),U(0,4),"t");',
+  'P_Sequence("k",1,1,U(-2,2)){',
+  'Boundary("Bottom");',
+   ageDepths,
+  'Boundary("Top");',
+  '};', sep = "\n")
 writeLines(commandp)
+```
 
+```{r run_Psequence}
 writeLines(commandp, con = "oxcalp.input")
-system(paste("/home/gbsrt/oxcal/OxCal/bin/OxCalLinux", "oxcalp.input"))
-
+system(paste("~/oxcal/OxCal/bin/OxCalLinux", "oxcalp.input"))
 ```
 
 Read P sequence model
@@ -166,39 +181,34 @@ fortify_oxcal <- function(depths, prob, start, resolution, comment = NA){
 ```{r importOxcal}
 js <- readLines("oxcalp.js")
 
-validOCD <- js[grep("data\\.z", js)]
-validOCD <- gsub("^(ocd\\[\\d+\\])\\..*","\\1", validOCD)
+get.OxCal <- function(js, posterior = TRUE){
+  if(posterior){
+    what <- "posterior"
+  }else{
+    what <- "likelihood"
+  }
+  depths <- get.values(js, "\\.data\\.z", "depth")
+  comment <- get.values(js, paste0(what,"\\.comment\\[0\\]"), "comment", FALSE)
+  depth_comment <- left_join(depths, comment)
+  
+  start <- get.values(js, paste0(what,"\\.start"), "start")
+  resolution <- get.values(js, paste0(what,"\\.resolution"), "resolution")
+  meta <- full_join(start, resolution)
+  meta <- inner_join(depth_comment, meta)
+  probs <- get.vectors(js, paste0(what,"\\.prob="))
+  
+  out <- plyr::adply(meta, 1, function(r){
+    prob <- probs[[r$lab]]
+    date <- r$start + 0:(length(prob) - 1) * r$resolution
+    data_frame(lab = r$lab, depth = r$depth, date = date, prob = prob, comment  = r$comment, posterior = posterior)
+  })
+  out
+}
 
-depths <- get.values(js, "\\.data\\.z", "depth")
-comment <- get.values(js, "posterior\\.comment\\[0\\]", "comment", FALSE)
-depth_comment <- left_join(depths, comment)
+posterior <- get.OxCal(js, posterior = TRUE)
+likelihood <- get.OxCal(js, posterior = FALSE)
 
-
-p_start <- get.values(js, "posterior\\.start", "start")
-p_resolution <- get.values(js, "posterior\\.resolution", "resolution")
-pmeta <- full_join(p_start, p_resolution)
-pmeta <- left_join(depth_comment, pmeta)
-posterior <- get.vectors(js, "posterior\\.prob=")
-
-l_start <- get.values(js, "likelihood\\.start", "start")
-l_resolution <- get.values(js, "likelihood\\.resolution", "resolution")
-lmeta <- full_join(l_start, l_resolution)
-lmeta <- inner_join(depth_comment, lmeta)
-likelihood <- get.vectors(js, "likelihood\\.prob=")
-
-posterior2 <- plyr::adply(pmeta, 1, function(r){
-  prob <- posterior[[r$lab]]
-  date <- r$start + 0:(length(prob) - 1) * r$resolution
-  data_frame(lab = r$lab, depth = r$depth, date = date, prob = prob, comment  = r$comment, posterior = TRUE)
-})
-
-likelihood2 <- plyr::adply(lmeta, 1, function(r){
-  prob <- likelihood[[r$lab]]
-  date <- r$start + 0:(length(prob) - 1) * r$resolution
-  data_frame(lab = r$lab, depth = r$depth, date = date, prob = prob, comment  = r$comment, posterior = FALSE)
-})
-
-allprob <- rbind(posterior2, likelihood2)
+allprob <- rbind(posterior, likelihood)
 allprob$date <- 1950 - allprob$date
 
 
@@ -217,6 +227,5 @@ allprob %>% filter(posterior == TRUE) %>%
            scale_alpha(range = c(0, 1)) +
            coord_flip() +
            labs(x = "Depth cm", y = "Date yr BP")
-
-
+```
 
