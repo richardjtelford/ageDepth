@@ -8,6 +8,7 @@ output: html_document
 ```{r setup, include=FALSE, message = FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+library("dplyr")
 library("ggplot2")
 ```
 
@@ -72,28 +73,31 @@ Import Oxcal function
 ```{r functions}
 get.vectors <- function(js, target) {
   x <- js[grep(target, js)]
-  x <- gsub(".+=\\[(.+)\\];", "\\1", x)
-  x <- strsplit(x, ", ")
-  sapply(x, as.numeric)
+  lab <- gsub("^(ocd\\[\\d+\\]).*", "\\1", x )
+  val <- gsub(".+=\\[(.+)\\];", "\\1", x)
+  val <- strsplit(val, ", ")
+  res <- sapply(val, as.numeric)
+  setNames(res, lab)
 }
 
-get.value <- function(js, target, numeric = TRUE) {
+get.values <- function(js, target, name = "value", numeric = TRUE) {
   x <- js[grep(target, js)]
-  x <- gsub(".+=(.+);", "\\1", x)
+  val <- gsub(".+=(.+);", "\\1", x)
+  lab <- gsub("^(ocd\\[\\d+\\]).*", "\\1", x )
   if(numeric) {
-    as.numeric(x)
-  } else {
-    x
-  }
+    val <- as.numeric(val)
+  } 
+  res <- data_frame(lab, val)
+  setNames(res, c("lab", name))
 }
 ```
 
 Import single dates
 ```{r}
 js <- readLines("oxcal.js")
-likelihoods <- get.vector(js, "likelihood\\.prob=")
-start <- get.value(js, "likelihood\\.start")
-resolution <- get.value(js, "likelihood\\.resolution")
+likelihoods <- get.vectors(js, "likelihood\\.prob=")
+start <- get.values(js, "likelihood\\.start")
+resolution <- get.values(js, "likelihood\\.resolution")
 
 oxcal <- mapply(
   function(depth, prob, start, resolution, group){
@@ -126,7 +130,7 @@ P sequence model building
 ageDepths <- paste0("R_date(\"Dep", dates$depth_corr, "\",", dates$raw_14C_age, ",", dates$error, "){z=", dates$depth_corr, "};")
 ageDepths <- rev(ageDepths)#oldest first
 ageDepths <- paste(ageDepths, collapse = "\n")
-commandp <- paste(curve, DR, "P_Sequence(\"k\",1,1,U(-2,2)){\nBoundary(\"Bottom\")", ageDepths,    "Boundary(\"Top\");
+commandp <- paste(curve, DR, "P_Sequence(\"k\",1,1,U(-2,2)){\nBoundary(\"Bottom\");", ageDepths,    "Boundary(\"Top\");
   };", sep = "\n")
 writeLines(commandp)
 
@@ -141,13 +145,13 @@ Read P sequence model
 
 js <- readLines("oxcalp.js")
 
-depths <- get.value(js, "data\\.z")
-posterior <- get.vector(js, "posterior\\.prob=")
-comment <- get.value(js, "posterior\\.comment\\[0\\]", FALSE)
+depths <- get.values(js, "data\\.z")
+posterior <- get.vectors(js, "posterior\\.prob=")
+comment <- get.values(js, "posterior\\.comment\\[0\\]", FALSE)
 comment <- comment[!grepl("MCMC", comment)]
 
-p_start <- get.value(js, "posterior\\.start")
-p_resolution <- get.value(js, "posterior\\.resolution")
+p_start <- get.values(js, "posterior\\.start")
+p_resolution <- get.values(js, "posterior\\.resolution")
 
 fortify_oxcal <- function(depths, prob, start, resolution, comment = NA){
    out <- mapply(
@@ -171,7 +175,6 @@ pseq <- fortify_oxcal(depths = depths, prob = posterior[-1], start = p_start[-1]
 
 head(pseq)
 
-library(dplyr)
 pseq %>%# filter(grepl("Bottom", comment)) %>%
   ggplot(aes(x = depth, y = date, alpha = prob)) + 
   geom_line() + 
@@ -180,3 +183,61 @@ pseq %>%# filter(grepl("Bottom", comment)) %>%
   coord_flip()
 
 ```
+
+```{r importOxcal}
+js <- readLines("oxcalp.js")
+
+validOCD <- js[grep("data\\.z", js)]
+validOCD <- gsub("^(ocd\\[\\d+\\])\\..*","\\1", validOCD)
+
+depths <- get.values(js, "\\.data\\.z", "depth")
+comment <- get.values(js, "posterior\\.comment\\[0\\]", "comment", FALSE)
+depth_comment <- left_join(depths, comment)
+
+
+p_start <- get.values(js, "posterior\\.start", "start")
+p_resolution <- get.values(js, "posterior\\.resolution", "resolution")
+pmeta <- full_join(p_start, p_resolution)
+pmeta <- left_join(depth_comment, pmeta)
+posterior <- get.vectors(js, "posterior\\.prob=")
+
+l_start <- get.values(js, "likelihood\\.start", "start")
+l_resolution <- get.values(js, "likelihood\\.resolution", "resolution")
+lmeta <- full_join(l_start, l_resolution)
+lmeta <- inner_join(depth_comment, lmeta)
+likelihood <- get.vectors(js, "likelihood\\.prob=")
+
+posterior2 <- plyr::adply(pmeta, 1, function(r){
+  prob <- posterior[[r$lab]]
+  date <- r$start + 0:(length(prob) - 1) * r$resolution
+  data_frame(lab = r$lab, depth = r$depth, date = date, prob = prob, comment  = r$comment, posterior = TRUE)
+})
+
+likelihood2 <- plyr::adply(lmeta, 1, function(r){
+  prob <- likelihood[[r$lab]]
+  date <- r$start + 0:(length(prob) - 1) * r$resolution
+  data_frame(lab = r$lab, depth = r$depth, date = date, prob = prob, comment  = r$comment, posterior = FALSE)
+})
+
+allprob <- rbind(posterior2, likelihood2)
+allprob$date <- 1950 - allprob$date
+
+
+allprob %>% filter(grepl("Dep", comment)) %>% 
+  ggplot(aes(x = depth, y = date, size = prob, colour = posterior)) + 
+           geom_line(alpha = 0.4) + 
+           scale_x_reverse() +
+           scale_size(range = c(0, 6)) +
+           coord_flip() +
+           labs(x = "Depth cm", y = "Date yr BP")
+
+allprob %>% filter(posterior == TRUE) %>% 
+  ggplot(aes(x = depth, y = date, alpha = prob)) + 
+           geom_line() + 
+           scale_x_reverse() +
+           scale_alpha(range = c(0, 1)) +
+           coord_flip() +
+           labs(x = "Depth cm", y = "Date yr BP")
+
+
+
