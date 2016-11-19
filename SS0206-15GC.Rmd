@@ -68,15 +68,28 @@ dates <- dates[order(dates$depth_corr, decreasing = TRUE), ]
 Make P sequence model
 
 ```{r make_Psequence}
-ageDepths <- paste0(' R_date("Dep', dates$depth_corr, '",', dates$raw_14C_age, ',', dates$error, '){\n   z=', dates$depth_corr, ';\n   Outlier(0.05);\n };')
+#Calibration information
+curve <- ' Curve("marine13");'
+DR <- ' Delta_R("Local Marine",40,30);'
+
+#The dates
+ageDepths <- with(dates, sprintf('  R_date("Dep%s",%d,%d){\n    z=%s;\n    Outlier(0.05);\n  };', depth_corr, raw_14C_age, error, depth_corr))
 ageDepths <- paste(ageDepths, collapse = "\n")
-commandp <- paste(curve, DR,
-  'P_Sequence("k",1,1,U(-2,2)){',
+
+#Putting it all together
+commandp <- paste(
+  curve, 
+  DR,
   ' Outlier_Model("General",T(5),U(0,4),"t");',
-  ' Boundary("Bottom");',
-   ageDepths,
-  ' Boundary("Top");',
-  '};', sep = "\n")
+  ' P_Sequence("k",1,1,U(-2,2)){',
+  '  Boundary("Bottom");',
+     ageDepths,
+  '  Boundary("Top");',
+  ' };', 
+  sep = "\n")
+
+#Wrapping in Plot()
+commandp <- paste('Plot(){', commandp, '};', sep = "\n")
 writeLines(commandp)
 ```
 
