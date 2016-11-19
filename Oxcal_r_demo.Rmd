@@ -1,0 +1,117 @@
+---
+title: "OxCal & R"
+author: "Richard J. Telford"
+date: "October 2, 2016"
+output:
+  html_document:
+    keep_md: yes
+---
+
+[OxCal](https://c14.arch.ox.ac.uk/oxcal.html) is perhaps the most powerful of the three main Bayesian age-depth modelling procedures, with many many options and the potential for building far more complicated than your typical palaeolimnologist needs to use. Unlike [Bchron](https://cran.r-project.org/web/packages/Bchron/index.html) and [Bacon](http://www.chrono.qub.ac.uk/blaauw/bacon.html), OxCal is not R based. Much as I want to use OxCal, I also want to use R. 
+
+In this post, I show how OxCal models can be built in R, the OxCal command line program called from R, and the output imported into R and plotted. The code does not deal will all possible outputs from OxCal (it may need altering if your model is different from mine) and absolutely does not absolve you from checking the log files for any problems. 
+
+You need to start by [downloading OxCal](https://c14.arch.ox.ac.uk/oxcalhelp/readme.html#local) and installing it somewhere convenient on your computer.
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE)
+knitr::read_chunk("r/ImportOxcal.R")
+source("r/ImportOxcal.R")
+```
+
+We need a couple of packages for data manipulation and plotting.
+
+```{r libraries}
+library("dplyr")
+library("ggplot2")
+```
+
+And we need some radiocarbon dates. Here are a few of the dates from a model I'm currently working on (the full set of dates takes about six hours to process).
+
+```{r data}
+dates <- read.table(header = TRUE, text = 
+"depth_corr	Lab_Code	raw_14C_age	error
+312.5	X-1	16010	100
+352   X-2	16670	 70
+406.5	X-3	17730	130
+440.5	X-4	18690	120
+490.5	X-5	20150	220
+535.5	X-6	20930	170
+")
+```
+
+OxCal was written by archaeologists so you need to think like an archaeologist to use it: oldest dates need to come first in the model. (I suspect many palaeolimnologists get this wrong and then wait days before the model refuses to converge. At least I've done this a couple of times.)
+
+```{r}
+##sort so oldest first
+dates <- dates[order(dates$depth_corr, decreasing = TRUE), ]
+```
+
+I want to use a P sequence model to fit an age-depth model to the dates. I'm using the Marine13 calibration curve with a local reservoir offset of 40 +/-30 years. I'm using the P sequence model with a _k_ selected from a prior distribution by OxCal and with an outlier model. All these commands and their arguments are explained in the on-line help for OxCal. `writeLines` prints the formatted model to the screen. I've used lots of white space (it's free) to make it human readable.
+
+```{r make_Psequence}
+curve <- 'Curve("marine13");'
+DR <- 'Delta_R("Local Marine",40,30);'
+ageDepths <- paste0(' R_date("Dep', dates$depth_corr, '",', dates$raw_14C_age, ',',  dates$error, '){\n   z=', dates$depth_corr, ';\n   Outlier(0.05);\n};')
+ageDepths <- paste(ageDepths, collapse = "\n")
+commandp <- paste(curve, DR,
+  'P_Sequence("k",1,1,U(-2,2)){',
+  ' Outlier_Model("General",T(5),U(0,4),"t");',
+  ' Boundary("Bottom");',
+   ageDepths,
+  ' Boundary("Top");',
+  '};', sep = "\n")
+writeLines(commandp)
+```
+
+Once we're happy with the model, we can save the file and call the OxCal command line utility. There are different versions of this for Linux, Mac and Windows.
+
+```{r run_Psequence}
+writeLines(commandp, con = "oxcal_demo.input")
+system(paste("~/oxcal/OxCal/bin/OxCalLinux", "oxcal_demo.input"))
+```
+
+Depending on how complicated your model is, you now have time for a cup of tea or a round the world cruise. During this time, R will sit there apparently doing nothing, but in the background, OxCal is busy shunting electrons round.
+
+OxCal will produce three files, `oxcal_demo.log`, `oxcal_demo.txt`, and `oxcal_demo.js`. You need to look in the `.log` file and check for any problems. The `.txt` file contains a summary of the model output and the `.js` file contains all the details. It is this file we need to read into R. Unfortunately it is a large and complicated file which takes a bit of effort to read. I've made some functions to help import the data. They extract what I need - they will need modifying if you need other information or if you have used a different naming convention for the dates.
+
+```{r getValues}
+```
+```{r getVectors}
+```
+```{r getOxcal}
+```
+These functions use regular expressions to find and extract the required information. If you don't know how to use regular expressions, it is well worth spending a morning learning how to use them as they are very useful for processing data.
+
+With these functions, we need to first read the `.js` file into memory and then extract the posterior and likelihood information separately.
+
+```{r importOxcal}
+js <- readLines("oxcal_demo.js")
+posterior <- get.OxCal(js, posterior = TRUE)
+likelihood <- get.OxCal(js, posterior = FALSE)
+allprob <- rbind(posterior, likelihood)
+
+head(allprob)
+```
+
+Another function will summarise the age-depth model, extracting, by default, the 95.4% credibility interval.
+
+```{r getAgemodel}
+```
+```{r}
+mod <- get.ageModel(x = allprob)
+```
+
+A final function plots the model
+
+```{r plotdatesmodel}
+```
+
+```{r}
+g <- plot.dates_model(allprob, mod, "My Core")
+print(g)
+```
+
+The red lozenges show the probability distribution function of the each date when calibrated individually. The blue lozenges show the posterior probability distribution functions of each date when modelled with the p-sequence model.
+
+
