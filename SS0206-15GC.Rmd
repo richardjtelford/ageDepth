@@ -96,16 +96,9 @@ likelihood <- get.OxCal(js, posterior = FALSE)
 
 allprob <- rbind(posterior, likelihood)
 
-mod <- allprob %>% 
-  filter(posterior == TRUE) %>% 
-  group_by(depth, comment) %>% 
-  mutate(sumProb = cumsum(prob)) %>% 
-  mutate(sumProb = sumProb/max(sumProb)) %>% 
-  summarise(
-    medianDate = approx(x = sumProb, y = date, xout =  0.5)$y,
-    lowCI = approx(x = sumProb, y = date, xout = 0.025)$y,
-    highCI = approx(x = sumProb, y = date, xout = 0.975)$y
-  ) 
+mod <- get.ageModel(x = allprob)
+
+plot.dates_model(allprob, mod, "SS0206-15GC")
 
 
 allprob %>% filter(grepl("Dep", comment)) %>% 
