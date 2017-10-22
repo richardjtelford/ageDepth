@@ -73,7 +73,8 @@ curve <- ' Curve("marine13");'
 DR <- ' Delta_R("Local Marine",40,30);'
 
 #The dates
-ageDepths <- with(dates, sprintf('  R_date("Dep%s",%d,%d){\n    z=%s;\n    Outlier(0.05);\n  };', depth_corr, raw_14C_age, error, depth_corr))
+ageDepths <- with(dates, 
+                  sprintf('  R_date("Dep%s",%d,%d){\n    z=%s;\n    Outlier(0.10);\n  };', depth_corr, raw_14C_age, error, depth_corr))
 ageDepths <- paste(ageDepths, collapse = "\n")
 
 #Putting it all together
@@ -81,10 +82,10 @@ commandp <- paste(
   curve, 
   DR,
   ' Outlier_Model("General",T(5),U(0,4),"t");',
-  ' P_Sequence("k",1,1,U(-2,2)){',
-  '  Boundary("Bottom");',
+  ' P_Sequence("k",1,2,U(-2,2)){',
+  '  Boundary("Bottom"){z=',max(dates$depth_corr) + 10,';};',
      ageDepths,
-  '  Boundary("Top");',
+  '  Boundary("Top"){z=',min(dates$depth_corr) - 10,';};',
   ' };', 
   sep = "\n")
 
@@ -112,28 +113,18 @@ allprob <- rbind(posterior, likelihood)
 mod <- get.ageModel(x = allprob)
 
 plot.dates_model(allprob, mod, "SS0206-15GC")
-
-
-allprob %>% filter(grepl("Dep", comment)) %>% 
-  ggplot(aes(x = depth, y = date, size = prob, colour = posterior, group = comment)) +   
-     geom_ribbon(data = mod, aes(x = depth, ymax = highCI, ymin = lowCI), inherit.aes = FALSE, alpha  = 0.2) +
-     geom_line(data = mod, aes(x = depth, y = medianDate), inherit.aes = FALSE, colour = "grey40") +
-     geom_line(alpha = 0.6) + 
-     scale_x_reverse() +
-     scale_size(range = c(0, 6)) +
-     coord_flip() +
-     labs(x = "Depth cm", y = "Date yr BP") + 
-     theme_bw() + 
-     ggtitle("SS0206-15GC")
-
-
-allprob %>% filter(posterior == TRUE) %>% 
-  ggplot(aes(x = depth, y = date, alpha = prob)) + 
-           geom_line() + 
-           scale_x_reverse() +
-           scale_alpha(range = c(0, 1)) +
-           coord_flip() +
-           labs(x = "Depth cm", y = "Date yr BP")+
-  geom_line(data = mod, aes(x = depth, y = medianDate), colour = "red", inherit.aes = FALSE)
 ```
 
+head(mod)
+tail(mod)
+
+#interpolate model
+useDepths <- seq(min(mod$depth), max(mod$depth), 0.5)
+imod <- data_frame(
+  depth = useDepths, 
+  medianDate = approx(x = mod$depth, y = mod$medianDate, xout = useDepths)$y,
+  lowCI = approx(x = mod$depth, y = mod$lowCI, xout = useDepths)$y,
+  highCI = approx(x = mod$depth, y = mod$highCI, xout = useDepths)$y
+  )
+plot(imod$depth, imod$medianDate)
+write.table(imod, file = "SS0206_15GC_age.csv", sep = ",", row.names = FALSE)
