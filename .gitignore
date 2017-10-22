@@ -1,0 +1,24 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+#cache files
+*_cache/
+*_files/
+
+#graphics
+*.png
+
+#output
+*.html
+*.csv
+
+#oxcal files
+*.input
+*.js*
+*.log
+*.txt
+
+#data files
+*.xls
