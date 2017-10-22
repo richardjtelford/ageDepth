@@ -1,0 +1,158 @@
+---
+title: "SS0206-15GC"
+author: "Richard J. Telford"
+date: "October 2, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+source("r/ImportOxcal.R")
+library("dplyr")
+library("ggplot2")
+library("readr")
+```
+
+```{r data}
+dates <- read_delim(delim = "\t", comment = "#", file = 
+"depth_corr	Lab_Code	raw_14C_age	error
+2.5	ETH56176	994	62
+6.5	ETH56177	1180	30
+7	Poz-18166	1240	30
+19.5	Poz-15818	1820	30
+25	OZH719	2060	60
+38.5	ETH56178	2425	71
+45	OZH720	2550	60
+55.5	Poz-15819	2785	35
+61.5	Poz-15820	3000	35
+68.5	ETH56950	3203	75
+75.5	Poz-18830	3510	40
+84.5	ETH56179	3557	74
+85	OZH721	3610	90
+91.5	Poz-18831	3925	35
+100.5	ETH56180	4207	74
+118.5	Poz-15821	4460	35
+132.5	Poz-15823	4950	40
+138.5	ETH56181	4973	71
+145	OZH723	5460	70
+154.5	Poz-15824	5530	40
+159.5	OZJ067	5740	120
+160.5	ETH56182	5721	81
+170.5	ETH56183	6054	93
+175.5	Poz-15825	6510	40
+178.5	ETH56951	6500	81
+184.5	Poz-58184	6620	60
+194.5	Poz-57689	6940	50
+200.5	ETH56184	7086	117
+205	OZH726	7560	70
+214.5	Poz-57690	7780	60
+218.5	ETH56952	7906	50
+225	OZH727	8180	90
+230.5	Poz-15826	8190	40
+245.5	ETH56185	8483	146
+#245.5	ETH56185	8483	146 ##Duplicate
+254.5	ETH56953	8862	80
+265	OZH729	9170	60
+274.5	ETH56186	9599	184
+292.5	Poz-15827	9960	50
+304.5	ETH56187	10443	151
+305	OZH730	10630	120
+314	S-ANU 13205	10665	40
+330	S-ANU 13206	11230	45
+345	ETH56954	12052	59
+365	OZH732	13130	110
+366.5	ETH56188	12863	137
+379	S-ANU 30513	13390	60
+405	OZH733	14490	110
+426	S-ANU 30514	15230	70
+451	S-ANU 13207	15480	60
+470	S-ANU 30516	16200	70
+527	S-ANU 30517	17610	90
+551	S-ANU 13209	18000	80
+601	S-ANU 13210	19130	80
+626	S-ANU 30519	19870	90
+652	S-ANU 13211	20640	100
+677	S-ANU 30520	20720	110
+701	S-ANU 13212	21130	110
+724	S-ANU 14518	22320	140
+")
+
+##sort so oldest first
+dates <- dates[order(dates$depth_corr, decreasing = TRUE), ]
+```
+
+
+Make P sequence model
+
+```{r make_Psequence}
+#Calibration information
+curve <- ' Curve("marine13");'
+DR <- ' Delta_R("Local Marine",40,30);'
+
+#The dates
+ageDepths <- with(dates, 
+                  sprintf('  R_date("Dep%s",%d,%d){\n    z=%s;\n    Outlier(0.10);\n  };', depth_corr, raw_14C_age, error, depth_corr))
+ageDepths <- paste(ageDepths, collapse = "\n")
+
+#Putting it all together
+commandp <- paste(
+  curve, 
+  DR,
+  ' Outlier_Model("General",T(5),U(0,4),"t");',
+  ' P_Sequence("k",1,2,U(-2,2)){',
+  '  Boundary("Bottom"){z=',max(dates$depth_corr) + 10,';};',
+     ageDepths,
+  '  Boundary("Top"){z=',min(dates$depth_corr) - 10,';};',
+  ' };', 
+  sep = "\n")
+
+#Wrapping in Plot()
+commandp <- paste('Plot(){', commandp, '};', sep = "\n")
+writeLines(commandp)
+```
+
+Run P sequence
+```{r run_Psequence}
+writeLines(commandp, con = "oxcal2611.input")
+system(paste("~/oxcal/OxCal/bin/OxCalLinux", "oxcal2611.input"))
+```
+
+Read P sequence model
+
+```{r importOxcal}
+js <- readLines("oxcal2611.js")
+
+posterior <- get.OxCal(js, posterior = TRUE)
+likelihood <- get.OxCal(js, posterior = FALSE)
+
+allprob <- rbind(posterior, likelihood)
+
+mod <- get.ageModel(x = allprob)
+
+plot.dates_model(allprob, mod, "MD03-2611")
+```
+
+```{r eval = FALSE, echo=FALSE}
+allprob %>% filter(posterior == TRUE) %>% 
+  ggplot(aes(x = depth, y = date, alpha = prob)) + 
+           geom_line() + 
+           scale_x_reverse() +
+           scale_alpha(range = c(0, 1)) +
+           coord_flip() +
+           labs(x = "Depth cm", y = "Date yr BP")+
+  geom_line(data = mod, aes(x = depth, y = medianDate), colour = "red", inherit.aes = FALSE)
+```
+
+```{r}
+#interpolate model
+useDepths <- seq(min(mod$depth), max(mod$depth), 0.5)
+imod <- data_frame(
+  depth = useDepths, 
+  medianDate = approx(x = mod$depth, y = mod$medianDate, xout = useDepths)$y,
+  lowCI = approx(x = mod$depth, y = mod$lowCI, xout = useDepths)$y,
+  highCI = approx(x = mod$depth, y = mod$highCI, xout = useDepths)$y
+  )
+plot(imod$depth, imod$medianDate)
+write.table(imod, file = "MD03_2611.csv", sep = ",", row.names = FALSE)
+```
